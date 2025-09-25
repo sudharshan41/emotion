@@ -47,13 +47,15 @@ export function LiveDetectionClient() {
   const [permissionsGranted, setPermissionsGranted] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const drowsyIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const emotionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const drowsyCounterRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const jokeAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isTellingJoke, setIsTellingJoke] = useState(false);
 
-  const [isProcessing, startTransition] = useTransition();
+  const [isDrowsyProcessing, startDrowsyTransition] = useTransition();
+  const [isEmotionProcessing, startEmotionTransition] = useTransition();
   const { toast } = useToast();
 
   const playBuzzer = () => {
@@ -134,20 +136,19 @@ export function LiveDetectionClient() {
     }
   }, [isTellingJoke, toast]);
 
-  const analyzeFrame = useCallback(async () => {
-    if (!videoRef.current || !mediaStreamRef.current || videoRef.current.paused || isProcessing) return;
+  const analyzeDrowsiness = useCallback(async () => {
+    if (!videoRef.current || !mediaStreamRef.current || videoRef.current.paused || isDrowsyProcessing) return;
 
-    startTransition(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current!.videoWidth;
+    canvas.height = videoRef.current!.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(videoRef.current!, 0, 0, canvas.width, canvas.height);
+    const dataUri = canvas.toDataURL("image/jpeg");
+
+    startDrowsyTransition(async () => {
         try {
-            const canvas = document.createElement("canvas");
-            canvas.width = videoRef.current!.videoWidth;
-            canvas.height = videoRef.current!.videoHeight;
-            const context = canvas.getContext("2d");
-            if (!context) return;
-            context.drawImage(videoRef.current!, 0, 0, canvas.width, canvas.height);
-            const dataUri = canvas.toDataURL("image/jpeg");
-            
-            // Drowsiness check
             const drowsyResult = await alertOnDrowsiness({ faceVideoDataUri: dataUri });
             if (drowsyResult.isDrowsy) {
               drowsyCounterRef.current += 1;
@@ -160,9 +161,27 @@ export function LiveDetectionClient() {
               drowsyCounterRef.current = 0;
               setIsDrowsy(false);
             }
-      
-            // Emotion check (only if not drowsy and not already telling a joke)
-            if (drowsyCounterRef.current < 2 && !isTellingJoke) {
+        } catch(e) {
+            console.error("Drowsiness analysis failed", e);
+        }
+    });
+  }, [isDrowsyProcessing]);
+
+  const analyzeEmotion = useCallback(async () => {
+    if (!videoRef.current || !mediaStreamRef.current || videoRef.current.paused || isEmotionProcessing || isTellingJoke) return;
+    
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current!.videoWidth;
+    canvas.height = videoRef.current!.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(videoRef.current!, 0, 0, canvas.width, canvas.height);
+    const dataUri = canvas.toDataURL("image/jpeg");
+
+    startEmotionTransition(async () => {
+        try {
+            // Emotion check (only if not drowsy)
+            if (drowsyCounterRef.current < 2) {
               const emotionResult = await analyzeUploadedMedia({ mediaDataUri: dataUri });
               if (emotionResult.summary) {
                 setLastAnalysis(emotionResult.summary);
@@ -177,10 +196,10 @@ export function LiveDetectionClient() {
               }
             }
         } catch(e) {
-            console.error("Analysis failed", e);
+            console.error("Emotion analysis failed", e);
         }
     });
-  }, [isProcessing, isTellingJoke, tellJoke]);
+  }, [isEmotionProcessing, isTellingJoke, tellJoke]);
 
   const startDetection = () => {
     if (!permissionsGranted) {
@@ -190,14 +209,19 @@ export function LiveDetectionClient() {
     setIsDetecting(true);
     drowsyCounterRef.current = 0;
     if(videoRef.current) videoRef.current.play().catch(e => console.error("Video play failed", e));
-    analysisIntervalRef.current = setInterval(analyzeFrame, 1000); // Analyze every second
+    drowsyIntervalRef.current = setInterval(analyzeDrowsiness, 1000); // Drowsiness check every second
+    emotionIntervalRef.current = setInterval(analyzeEmotion, 8000); // Emotion check every 8 seconds
   };
 
   const stopDetection = () => {
     setIsDetecting(false);
-    if (analysisIntervalRef.current) {
-      clearInterval(analysisIntervalRef.current);
-      analysisIntervalRef.current = null;
+    if (drowsyIntervalRef.current) {
+      clearInterval(drowsyIntervalRef.current);
+      drowsyIntervalRef.current = null;
+    }
+    if (emotionIntervalRef.current) {
+      clearInterval(emotionIntervalRef.current);
+      emotionIntervalRef.current = null;
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -209,7 +233,10 @@ export function LiveDetectionClient() {
         videoRef.current.srcObject = null;
     }
     drowsyCounterRef.current = 0;
+    setIsDrowsy(false);
   };
+  
+  const isProcessing = isDrowsyProcessing || isEmotionProcessing;
 
   return (
     <Card>
@@ -296,3 +323,5 @@ export function LiveDetectionClient() {
     </Card>
   );
 }
+
+    
