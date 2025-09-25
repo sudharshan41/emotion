@@ -120,7 +120,7 @@ export function LiveDetectionClient() {
     }
     setIsDetecting(true);
     if(videoRef.current) videoRef.current.play();
-    analysisIntervalRef.current = setInterval(analyzeFrame, 8000); // Analyze every 8 seconds
+    analysisIntervalRef.current = setInterval(analyzeFrame, 15000); // Analyze every 15 seconds
   };
 
   const stopDetection = () => {
