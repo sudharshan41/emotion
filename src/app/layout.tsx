@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { LayoutDashboard, Camera, Upload } from "lucide-react";
 import Link from "next/link";
 import { Logo } from "@/components/logo";
+import React from "react";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -34,24 +35,30 @@ export default function RootLayout({
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <Link href="/dashboard">
-                      <LayoutDashboard />
-                      Dashboard
+                      <React.Fragment>
+                        <LayoutDashboard />
+                        Dashboard
+                      </React.Fragment>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <Link href="/live-detection">
-                      <Camera />
-                      Live Detection
+                       <React.Fragment>
+                        <Camera />
+                        Live Detection
+                       </React.Fragment>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <Link href="/upload-media">
-                      <Upload />
-                      Upload Media
+                      <React.Fragment>
+                        <Upload />
+                        Upload Media
+                      </React.Fragment>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -60,10 +67,8 @@ export default function RootLayout({
           </Sidebar>
           <SidebarInset>
             <header className="flex h-14 items-center gap-4 border-b bg-card px-4 lg:h-[60px] lg:px-6">
-              <SidebarTrigger asChild>
-                <Button variant="outline" size="icon" className="shrink-0">
-                  <span className="sr-only">Toggle navigation menu</span>
-                </Button>
+              <SidebarTrigger variant="outline" size="icon" className="shrink-0">
+                <span className="sr-only">Toggle navigation menu</span>
               </SidebarTrigger>
               <div className="w-full flex-1">
                 <h1 className="text-lg font-semibold md:text-2xl">DrivePulse</h1>
