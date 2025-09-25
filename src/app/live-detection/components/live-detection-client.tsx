@@ -16,8 +16,6 @@ import {
 import { Progress } from "@/components/ui/progress";
 import {
   Camera,
-  Mic,
-  Video,
   VideoOff,
   AlertTriangle,
   Smile,
@@ -27,6 +25,8 @@ import {
 } from "lucide-react";
 import { alertOnDrowsiness } from "@/ai/flows/alert-on-drowsiness";
 import { analyzeUploadedMedia } from "@/ai/flows/analyze-uploaded-media";
+import { generateJoke } from "@/ai/flows/generate-joke-flow";
+import { textToSpeech } from "@/ai/flows/text-to-speech-flow";
 import { useToast } from "@/hooks/use-toast";
 
 const EMOTION_ICONS: { [key: string]: React.ReactNode } = {
@@ -50,6 +50,8 @@ export function LiveDetectionClient() {
   const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const drowsyCounterRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const jokeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [isTellingJoke, setIsTellingJoke] = useState(false);
 
   const [isProcessing, startTransition] = useTransition();
   const { toast } = useToast();
@@ -59,6 +61,9 @@ export function LiveDetectionClient() {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
     const audioCtx = audioContextRef.current;
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
 
@@ -95,6 +100,7 @@ export function LiveDetectionClient() {
 
   useEffect(() => {
     requestPermissions();
+    jokeAudioRef.current = new Audio();
     return () => {
       stopDetection();
        if (audioContextRef.current) {
@@ -103,42 +109,78 @@ export function LiveDetectionClient() {
     };
   }, [requestPermissions]);
 
-  const analyzeFrame = useCallback(async () => {
-    if (!videoRef.current || !mediaStreamRef.current || videoRef.current.paused) return;
-
-    startTransition(async () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current!.videoWidth;
-      canvas.height = videoRef.current!.videoHeight;
-      const context = canvas.getContext("2d");
-      context?.drawImage(videoRef.current!, 0, 0, canvas.width, canvas.height);
-      const dataUri = canvas.toDataURL("image/jpeg");
-      
-      // Drowsiness check
-      const drowsyResult = await alertOnDrowsiness({ faceVideoDataUri: dataUri });
-      if (drowsyResult.isDrowsy) {
-        drowsyCounterRef.current += 1;
-        if (drowsyCounterRef.current >= 2) {
-          playBuzzer();
-          setIsDrowsy(true);
-          setDrowsyAlertMessage(drowsyResult.alertMessage || "Drowsiness detected! Please take a break.");
+  const tellJoke = useCallback(async () => {
+    if (isTellingJoke) return;
+    setIsTellingJoke(true);
+    
+    try {
+      toast({ title: "Feeling down?", description: "Here's a little something to make you smile." });
+      const jokeResult = await generateJoke();
+      if (jokeResult.joke) {
+        const ttsResult = await textToSpeech(jokeResult.joke);
+        if (ttsResult.audioDataUri && jokeAudioRef.current) {
+            jokeAudioRef.current.src = ttsResult.audioDataUri;
+            jokeAudioRef.current.play();
+            jokeAudioRef.current.onended = () => setIsTellingJoke(false);
+        } else {
+          setIsTellingJoke(false);
         }
       } else {
-        drowsyCounterRef.current = 0;
+        setIsTellingJoke(false);
       }
+    } catch (error) {
+        console.error("Failed to tell a joke", error);
+        setIsTellingJoke(false);
+    }
+  }, [isTellingJoke, toast]);
 
-      // Emotion check (run less frequently if needed, or in parallel)
-      if (drowsyCounterRef.current === 0) { // Only check emotion if not drowsy
-        const emotionResult = await analyzeUploadedMedia({ mediaDataUri: dataUri });
-        if (emotionResult.summary) {
-          setLastAnalysis(emotionResult.summary);
-          const lowerSummary = emotionResult.summary.toLowerCase();
-          const foundEmotion = Object.keys(EMOTION_ICONS).find(em => lowerSummary.includes(em));
-          setEmotion(foundEmotion || "Neutral");
+  const analyzeFrame = useCallback(async () => {
+    if (!videoRef.current || !mediaStreamRef.current || videoRef.current.paused || isProcessing) return;
+
+    startTransition(async () => {
+        try {
+            const canvas = document.createElement("canvas");
+            canvas.width = videoRef.current!.videoWidth;
+            canvas.height = videoRef.current!.videoHeight;
+            const context = canvas.getContext("2d");
+            if (!context) return;
+            context.drawImage(videoRef.current!, 0, 0, canvas.width, canvas.height);
+            const dataUri = canvas.toDataURL("image/jpeg");
+            
+            // Drowsiness check
+            const drowsyResult = await alertOnDrowsiness({ faceVideoDataUri: dataUri });
+            if (drowsyResult.isDrowsy) {
+              drowsyCounterRef.current += 1;
+              if (drowsyCounterRef.current >= 2) { // 2 consecutive detections (2 seconds)
+                playBuzzer();
+                setIsDrowsy(true);
+                setDrowsyAlertMessage(drowsyResult.alertMessage || "Drowsiness detected! Please take a break.");
+              }
+            } else {
+              drowsyCounterRef.current = 0;
+              setIsDrowsy(false);
+            }
+      
+            // Emotion check (only if not drowsy and not already telling a joke)
+            if (drowsyCounterRef.current < 2 && !isTellingJoke) {
+              const emotionResult = await analyzeUploadedMedia({ mediaDataUri: dataUri });
+              if (emotionResult.summary) {
+                setLastAnalysis(emotionResult.summary);
+                const lowerSummary = emotionResult.summary.toLowerCase();
+                const foundEmotion = Object.keys(EMOTION_ICONS).find(em => lowerSummary.includes(em));
+                const currentEmotion = foundEmotion || "neutral";
+                setEmotion(currentEmotion);
+
+                if (currentEmotion === 'sad') {
+                    tellJoke();
+                }
+              }
+            }
+        } catch(e) {
+            console.error("Analysis failed", e);
         }
-      }
     });
-  }, []);
+  }, [isProcessing, isTellingJoke, tellJoke]);
 
   const startDetection = () => {
     if (!permissionsGranted) {
@@ -155,12 +197,15 @@ export function LiveDetectionClient() {
     setIsDetecting(false);
     if (analysisIntervalRef.current) {
       clearInterval(analysisIntervalRef.current);
+      analysisIntervalRef.current = null;
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
     if(videoRef.current) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream?.getTracks().forEach(track => track.stop());
         videoRef.current.srcObject = null;
     }
     drowsyCounterRef.current = 0;
@@ -189,7 +234,7 @@ export function LiveDetectionClient() {
             <div className="flex gap-2">
                 {!isDetecting ? (
                 <Button onClick={startDetection} disabled={!permissionsGranted} className="w-full">
-                    <Video className="mr-2 h-4 w-4" /> Start Detection
+                    <Camera className="mr-2 h-4 w-4" /> Start Detection
                 </Button>
                 ) : (
                 <Button onClick={stopDetection} variant="destructive" className="w-full">
@@ -204,7 +249,7 @@ export function LiveDetectionClient() {
                 {EMOTION_ICONS[emotion.toLowerCase()] || <Meh className="w-4 h-4 text-muted-foreground" />}
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold capitalize">{emotion}</div>
+                <div className="text-2xl font-bold capitalize">{isTellingJoke ? "Telling a joke..." : emotion}</div>
                 <p className="text-xs text-muted-foreground">
                   Real-time emotional state.
                 </p>
@@ -234,7 +279,7 @@ export function LiveDetectionClient() {
           </div>
         </div>
         
-        <AlertDialog open={isDrowsy} onOpenChange={setIsDrowsy}>
+        <AlertDialog open={isDrowsy}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle className="flex items-center gap-2">
