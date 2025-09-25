@@ -46,13 +46,33 @@ export function LiveDetectionClient() {
   const [lastAnalysis, setLastAnalysis] = useState("");
   const [permissionsGranted, setPermissionsGranted] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const drowsyCounterRef = useRef(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const [isProcessing, startTransition] = useTransition();
   const { toast } = useToast();
+
+  const playBuzzer = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    const audioCtx = audioContextRef.current;
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    oscillator.type = 'square';
+    oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A6 note
+    gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.5);
+
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + 0.5);
+  };
 
   const requestPermissions = useCallback(async () => {
     try {
@@ -77,11 +97,14 @@ export function LiveDetectionClient() {
     requestPermissions();
     return () => {
       stopDetection();
+       if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
     };
   }, [requestPermissions]);
 
   const analyzeFrame = useCallback(async () => {
-    if (!videoRef.current || !mediaStreamRef.current) return;
+    if (!videoRef.current || !mediaStreamRef.current || videoRef.current.paused) return;
 
     startTransition(async () => {
       const canvas = document.createElement("canvas");
@@ -94,21 +117,25 @@ export function LiveDetectionClient() {
       // Drowsiness check
       const drowsyResult = await alertOnDrowsiness({ faceVideoDataUri: dataUri });
       if (drowsyResult.isDrowsy) {
-        setIsDrowsy(true);
-        setDrowsyAlertMessage(drowsyResult.alertMessage || "Drowsiness detected! Please take a break.");
-        if (drowsyResult.audioDataUri && audioRef.current) {
-          audioRef.current.src = drowsyResult.audioDataUri;
-          audioRef.current.play();
+        drowsyCounterRef.current += 1;
+        if (drowsyCounterRef.current >= 2) {
+          playBuzzer();
+          setIsDrowsy(true);
+          setDrowsyAlertMessage(drowsyResult.alertMessage || "Drowsiness detected! Please take a break.");
         }
+      } else {
+        drowsyCounterRef.current = 0;
       }
 
-      // Emotion check
-      const emotionResult = await analyzeUploadedMedia({ mediaDataUri: dataUri });
-      if (emotionResult.summary) {
-        setLastAnalysis(emotionResult.summary);
-        const lowerSummary = emotionResult.summary.toLowerCase();
-        const foundEmotion = Object.keys(EMOTION_ICONS).find(em => lowerSummary.includes(em));
-        setEmotion(foundEmotion || "Neutral");
+      // Emotion check (run less frequently if needed, or in parallel)
+      if (drowsyCounterRef.current === 0) { // Only check emotion if not drowsy
+        const emotionResult = await analyzeUploadedMedia({ mediaDataUri: dataUri });
+        if (emotionResult.summary) {
+          setLastAnalysis(emotionResult.summary);
+          const lowerSummary = emotionResult.summary.toLowerCase();
+          const foundEmotion = Object.keys(EMOTION_ICONS).find(em => lowerSummary.includes(em));
+          setEmotion(foundEmotion || "Neutral");
+        }
       }
     });
   }, []);
@@ -119,8 +146,9 @@ export function LiveDetectionClient() {
       return;
     }
     setIsDetecting(true);
-    if(videoRef.current) videoRef.current.play();
-    analysisIntervalRef.current = setInterval(analyzeFrame, 15000); // Analyze every 15 seconds
+    drowsyCounterRef.current = 0;
+    if(videoRef.current) videoRef.current.play().catch(e => console.error("Video play failed", e));
+    analysisIntervalRef.current = setInterval(analyzeFrame, 1000); // Analyze every second
   };
 
   const stopDetection = () => {
@@ -135,6 +163,7 @@ export function LiveDetectionClient() {
     if(videoRef.current) {
         videoRef.current.srcObject = null;
     }
+    drowsyCounterRef.current = 0;
   };
 
   return (
@@ -204,7 +233,7 @@ export function LiveDetectionClient() {
             <Progress value={isDetecting ? (isProcessing ? 50 : 100) : 0} className="w-full" />
           </div>
         </div>
-        <audio ref={audioRef} style={{ display: "none" }} />
+        
         <AlertDialog open={isDrowsy} onOpenChange={setIsDrowsy}>
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -214,7 +243,7 @@ export function LiveDetectionClient() {
               <AlertDialogDescription>{drowsyAlertMessage}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogAction onClick={() => setIsDrowsy(false)}>I'm awake</AlertDialogAction>
+              <AlertDialogAction onClick={() => { setIsDrowsy(false); drowsyCounterRef.current = 0; } }>I'm awake</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
