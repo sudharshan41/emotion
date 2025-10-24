@@ -152,7 +152,7 @@ export function LiveDetectionClient() {
             const drowsyResult = await alertOnDrowsiness({ faceVideoDataUri: dataUri });
             if (drowsyResult.isDrowsy) {
               drowsyCounterRef.current += 1;
-              if (drowsyCounterRef.current >= 1) { // 1 detection (2 seconds)
+              if (drowsyCounterRef.current >= 1) { // 1 detection (5 seconds)
                 playBuzzer();
                 setIsDrowsy(true);
                 setDrowsyAlertMessage(drowsyResult.alertMessage || "Drowsiness detected! Please take a break.");
@@ -209,8 +209,8 @@ export function LiveDetectionClient() {
     setIsDetecting(true);
     drowsyCounterRef.current = 0;
     if(videoRef.current) videoRef.current.play().catch(e => console.error("Video play failed", e));
-    drowsyIntervalRef.current = setInterval(analyzeDrowsiness, 2000); // Drowsiness check every 2 seconds
-    emotionIntervalRef.current = setInterval(analyzeEmotion, 8000); // Emotion check every 8 seconds
+    drowsyIntervalRef.current = setInterval(analyzeDrowsiness, 5000); // Drowsiness check every 5 seconds
+    emotionIntervalRef.current = setInterval(analyzeEmotion, 15000); // Emotion check every 15 seconds
   };
 
   const stopDetection = () => {
@@ -323,5 +323,3 @@ export function LiveDetectionClient() {
     </Card>
   );
 }
-
-    
