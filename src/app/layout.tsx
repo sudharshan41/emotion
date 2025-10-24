@@ -71,7 +71,7 @@ export default function RootLayout({
                 <span className="sr-only">Toggle navigation menu</span>
               </SidebarTrigger>
               <div className="w-full flex-1">
-                <h1 className="text-lg font-semibold md:text-2xl">DrivePulse</h1>
+                <h1 className="text-lg font-semibold md:text-2xl">driver monitor system</h1>
               </div>
             </header>
             <main className="flex-1 p-4 sm:p-6">{children}</main>
