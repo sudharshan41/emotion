@@ -44,7 +44,7 @@ export function LiveDetectionClient() {
   const [drowsyAlertMessage, setDrowsyAlertMessage] = useState("");
   const [emotion, setEmotion] = useState("Neutral");
   const [lastAnalysis, setLastAnalysis] = useState("");
-  const [permissionsGranted, setPermissionsGranted] = useState(false);
+  const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const drowsyIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -80,36 +80,61 @@ export function LiveDetectionClient() {
     oscillator.start();
     oscillator.stop(audioCtx.currentTime + 0.5);
   };
-
-  const requestPermissions = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      mediaStreamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setPermissionsGranted(true);
-    } catch (error) {
-      console.error("Error accessing media devices.", error);
-      toast({
-        variant: "destructive",
-        title: "Permission Denied",
-        description: "Please allow camera and microphone access to use this feature.",
-      });
-      setPermissionsGranted(false);
+  
+   const stopDetection = useCallback(() => {
+    setIsDetecting(false);
+    if (drowsyIntervalRef.current) {
+      clearInterval(drowsyIntervalRef.current);
+      drowsyIntervalRef.current = null;
     }
-  }, [toast]);
+    if (emotionIntervalRef.current) {
+      clearInterval(emotionIntervalRef.current);
+      emotionIntervalRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    if(videoRef.current) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream?.getTracks().forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+    }
+    drowsyCounterRef.current = 0;
+    setIsDrowsy(false);
+  }, []);
 
   useEffect(() => {
-    requestPermissions();
+    const getCameraPermission = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({video: true});
+        setHasCameraPermission(true);
+        mediaStreamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      } catch (error) {
+        console.error('Error accessing camera:', error);
+        setHasCameraPermission(false);
+        toast({
+          variant: 'destructive',
+          title: 'Camera Access Denied',
+          description: 'Please enable camera permissions in your browser settings to use this feature.',
+        });
+      }
+    };
+
+    getCameraPermission();
     jokeAudioRef.current = new Audio();
+    
     return () => {
       stopDetection();
        if (audioContextRef.current) {
         audioContextRef.current.close();
       }
     };
-  }, [requestPermissions]);
+  }, [stopDetection, toast]);
 
   const tellJoke = useCallback(async () => {
     if (isTellingJoke) return;
@@ -202,8 +227,12 @@ export function LiveDetectionClient() {
   }, [isEmotionProcessing, isTellingJoke, tellJoke]);
 
   const startDetection = () => {
-    if (!permissionsGranted) {
-      requestPermissions();
+    if (!hasCameraPermission) {
+      toast({
+          variant: "destructive",
+          title: "Permission Denied",
+          description: "Please allow camera and microphone access to use this feature.",
+        });
       return;
     }
     setIsDetecting(true);
@@ -211,29 +240,6 @@ export function LiveDetectionClient() {
     if(videoRef.current) videoRef.current.play().catch(e => console.error("Video play failed", e));
     drowsyIntervalRef.current = setInterval(analyzeDrowsiness, 5000); // Drowsiness check every 5 seconds
     emotionIntervalRef.current = setInterval(analyzeEmotion, 15000); // Emotion check every 15 seconds
-  };
-
-  const stopDetection = () => {
-    setIsDetecting(false);
-    if (drowsyIntervalRef.current) {
-      clearInterval(drowsyIntervalRef.current);
-      drowsyIntervalRef.current = null;
-    }
-    if (emotionIntervalRef.current) {
-      clearInterval(emotionIntervalRef.current);
-      emotionIntervalRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-    if(videoRef.current) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream?.getTracks().forEach(track => track.stop());
-        videoRef.current.srcObject = null;
-    }
-    drowsyCounterRef.current = 0;
-    setIsDrowsy(false);
   };
   
   const isProcessing = isDrowsyProcessing || isEmotionProcessing;
@@ -244,7 +250,7 @@ export function LiveDetectionClient() {
         <div className="grid md:grid-cols-2 gap-6">
           <div className="relative aspect-video bg-muted rounded-lg overflow-hidden border">
             <video ref={videoRef} muted autoPlay playsInline className="w-full h-full object-cover"></video>
-            {!isDetecting && (
+            {!isDetecting && hasCameraPermission && (
               <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center text-white">
                 <VideoOff className="w-16 h-16" />
                 <p className="mt-2">Detection is off</p>
@@ -255,12 +261,18 @@ export function LiveDetectionClient() {
                 <Loader2 className="w-16 h-16 animate-spin" />
               </div>
             )}
+             {!hasCameraPermission && (
+              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center text-white">
+                <Camera className="w-16 h-16" />
+                <p className="mt-2 text-center">Camera permission denied.<br />Please enable it in your browser settings.</p>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-4">
             <div className="flex gap-2">
                 {!isDetecting ? (
-                <Button onClick={startDetection} disabled={!permissionsGranted} className="w-full">
+                <Button onClick={startDetection} disabled={!hasCameraPermission} className="w-full">
                     <Camera className="mr-2 h-4 w-4" /> Start Detection
                 </Button>
                 ) : (
@@ -291,13 +303,12 @@ export function LiveDetectionClient() {
               </AlertDescription>
             </Alert>
             
-            {!permissionsGranted && (
+            {!hasCameraPermission && (
                  <Alert variant="destructive">
                     <AlertTriangle className="h-4 w-4" />
                     <AlertTitle>Permissions Required</AlertTitle>
                     <AlertDescription>
                         Camera and microphone access is required for live detection.
-                        <Button variant="link" onClick={requestPermissions} className="p-0 h-auto ml-1">Grant Permissions</Button>
                     </AlertDescription>
                 </Alert>
             )}
