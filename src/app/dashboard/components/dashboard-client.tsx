@@ -46,6 +46,9 @@ export function DashboardClient({ data }: DashboardClientProps) {
       }
     });
   };
+  
+  const primaryEmotion = data.emotionDistribution.reduce((prev, current) => (prev.count > current.count) ? prev : current, { emotion: 'N/A' }).emotion;
+
 
   return (
     <div className="flex flex-col gap-6">
@@ -60,7 +63,7 @@ export function DashboardClient({ data }: DashboardClientProps) {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           title="Primary Emotion"
-          value="Neutral"
+          value={primaryEmotion}
           icon={<Smile className="h-4 w-4 text-muted-foreground" />}
           description="The most frequent emotion detected."
         />
